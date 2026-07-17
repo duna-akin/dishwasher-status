@@ -5,98 +5,105 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Dishwasher Status</title>
 <style>
-  :root {
-    --clean: #2f7a5f;
-    --dirty: #a8452f;
-    --bg: #14161a;
-    --text: #f4f1ea;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body {
-    height: 100%;
-    background: var(--bg);
-    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
-  }
+  :root { --teal: #007A73; --dirty: #B3441E; --ink: #231F20; }
+  * { box-sizing: border-box; margin: 0; }
   body {
+    min-height: 100vh;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: center;
-    padding: 24px;
+    gap: 24px;
+    padding: 40px 20px;
+    background: #F2F5F4;
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", sans-serif;
   }
-  button#status {
-    width: min(88vw, 420px);
-    height: min(88vw, 420px);
+  button {
+    width: min(70vw, 280px);
+    height: min(70vw, 280px);
     border-radius: 50%;
     border: none;
-    color: var(--text);
-    font-size: clamp(28px, 8vw, 44px);
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    cursor: pointer;
-    transition: background-color 0.25s ease, transform 0.1s ease;
-    box-shadow: 0 0 0 8px rgba(255,255,255,0.04);
+    background: var(--teal);
+    color: #fff;
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
   }
-  button#status:active {
-    transform: scale(0.97);
-  }
-  button#status.clean { background: var(--clean); }
-  button#status.dirty { background: var(--dirty); }
-  #sub {
+  button.dirty { background: var(--dirty); }
+  button span {
     display: block;
-    margin-top: 14px;
-    font-size: 15px;
-    font-weight: 400;
-    opacity: 0.75;
-  }
-  #hint {
-    position: fixed;
-    bottom: 24px;
-    color: var(--text);
-    opacity: 0.4;
     font-size: 13px;
-    font-family: -apple-system, sans-serif;
+    font-weight: 500;
+    opacity: 0.85;
+    margin-top: 6px;
   }
+  ul {
+    list-style: none;
+    width: 100%;
+    max-width: 320px;
+  }
+  li {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 13.5px;
+    padding: 8px 0;
+    border-top: 1px solid #E1E6E5;
+  }
+  li:first-child { border-top: none; }
+  time { color: #8a908f; white-space: nowrap; }
 </style>
 </head>
 <body>
-  <button id="status" class="dirty">
-    Loading…
-  </button>
-  <div id="hint">Tap to change</div>
+  <button id="status">Loading…</button>
+  <ul id="log"></ul>
 
 <script>
   const btn = document.getElementById('status');
-  const BUCKET_ID = 'H5XU7fU9gPbQFcfx1857Ts';
-  const URL = `https://kvdb.io/${BUCKET_ID}/dishwasher_status`;
+  const log = document.getElementById('log');
+  const BUCKET = 'H5XU7fU9gPbQFcfx1857Ts';
+  const STATUS_URL = `https://kvdb.io/${BUCKET}/dishwasher_status`;
+  const LOG_URL = `https://kvdb.io/${BUCKET}/dishwasher_log`;
+
+  const getName = () =>
+    localStorage.getItem('name') ||
+    (localStorage.setItem('name', prompt("What's your name?") || 'Someone'), localStorage.getItem('name'));
 
   function render(state) {
-    if (state === 'clean') {
-      btn.className = 'clean';
-      btn.innerHTML = 'CLEAN<span id="sub">tap if you loaded it dirty</span>';
-    } else {
-      btn.className = 'dirty';
-      btn.innerHTML = 'DIRTY<span id="sub">tap once it\'s clean</span>';
-    }
+    btn.className = state;
+    btn.innerHTML = state === 'clean'
+      ? 'CLEAN<span>Tap if you loaded it dirty</span>'
+      : 'DIRTY<span>Tap once it\'s clean</span>';
+  }
+
+  function renderLog(entries) {
+    log.innerHTML = entries.slice().reverse().map(e => `
+      <li>${e.who} marked it ${e.status}
+        <time>${new Date(e.t).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'})}</time>
+      </li>`).join('');
   }
 
   async function load() {
-    try {
-      const res = await fetch(URL);
-      const text = res.ok ? await res.text() : 'dirty';
-      render(text.trim() || 'dirty');
-    } catch (e) {
-      render('dirty');
-    }
+    const [status, logText] = await Promise.all([
+      fetch(STATUS_URL).then(r => r.ok ? r.text() : 'dirty').catch(() => 'dirty'),
+      fetch(LOG_URL).then(r => r.ok ? r.text() : '[]').catch(() => '[]'),
+    ]);
+    render(status.trim() || 'dirty');
+    renderLog(logText.trim() ? JSON.parse(logText) : []);
   }
 
   async function toggle() {
-    const current = btn.classList.contains('clean') ? 'clean' : 'dirty';
+    const current = btn.className;
     const next = current === 'clean' ? 'dirty' : 'clean';
-    render(next); // optimistic
+    render(next);
     try {
-      await fetch(URL, { method: 'POST', body: next });
+      await fetch(STATUS_URL, { method: 'POST', body: next });
+      const entries = JSON.parse((await fetch(LOG_URL).then(r => r.ok ? r.text() : '[]')) || '[]');
+      entries.push({ who: getName(), status: next, t: Date.now() });
+      await fetch(LOG_URL, { method: 'POST', body: JSON.stringify(entries.slice(-15)) });
+      renderLog(entries.slice(-15));
     } catch (e) {
-      render(current); // revert on failure
+      render(current);
     }
   }
 
